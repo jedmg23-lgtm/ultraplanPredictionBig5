@@ -10,7 +10,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.data import LEAGUES, load_matches
+from src.data import LEAGUES, load_matches, top_flight_teams
+from src.evaluate import backtest
 from src.model import fit_poisson_model
 from src.simulate import simulate_match
 
@@ -29,15 +30,22 @@ st.set_page_config(page_title="Big 5 Match Predictor", page_icon="⚽", layout="
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner="Downloading match data…")
-def get_matches(league_code: str, n_seasons: int) -> pd.DataFrame:
-    return load_matches(league_code, n_seasons=n_seasons, refresh_current=True)
+def get_matches(codes: tuple, n_seasons: int) -> pd.DataFrame:
+    return load_matches(codes, n_seasons=n_seasons, refresh_current=True)
 
 
 @st.cache_resource(show_spinner="Fitting Poisson regression…")
-def get_model(league_code: str, n_seasons: int, half_life_days: float, data_version: str):
+def get_model(codes: tuple, n_seasons: int, half_life_days: float, data_version: str):
     # data_version keys the cache so the model refits when new results arrive
-    matches = get_matches(league_code, n_seasons)
+    matches = get_matches(codes, n_seasons)
     return fit_poisson_model(matches, half_life_days=half_life_days)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Replaying history (walk-forward backtest)…")
+def get_backtest(codes: tuple, n_seasons: int, half_life_days: float, data_version: str):
+    matches = get_matches(codes, n_seasons)
+    result = backtest(matches, codes[0], half_life_days=half_life_days)
+    return result.metrics, result.calibration(), result.n_matches, result.n_refits
 
 
 def pct(x: float) -> str:
@@ -131,38 +139,37 @@ with st.sidebar:
         "Form half-life (days)",
         60,
         720,
-        300,
+        120,
         step=30,
-        help="A match this many days old counts half as much as one played today.",
+        help="A match this many days old counts half as much as one played today. "
+        "120 scored best in walk-forward backtesting.",
     )
     n_sims = st.select_slider(
         "Monte Carlo simulations", options=[5_000, 10_000, 20_000, 50_000, 100_000], value=20_000
     )
     st.caption(
-        "Data: [football-data.co.uk](https://www.football-data.co.uk/). "
-        "Model: Poisson regression (attack/defence + home advantage) "
+        "Data: [football-data.co.uk](https://www.football-data.co.uk/), top two "
+        "divisions per country — promoted teams carry ratings from their old "
+        "division. Model: Poisson regression (attack/defence + home advantage) "
         "with exponential time decay."
     )
 
-league_code = LEAGUES[league_name]
+codes = LEAGUES[league_name]
+top_code = codes[0]
 
 try:
-    matches = get_matches(league_code, n_seasons)
+    matches = get_matches(codes, n_seasons)
 except RuntimeError as e:
     st.error(str(e))
     st.stop()
 
 data_version = f"{matches['Date'].max():%Y-%m-%d}-{len(matches)}"
-model = get_model(league_code, n_seasons, float(half_life), data_version)
+model = get_model(codes, n_seasons, float(half_life), data_version)
 
-# Current-season teams first in the pickers; older relegated teams after.
-latest_season = matches["Season"].max()
-current = sorted(
-    set(matches.loc[matches["Season"] == latest_season, "HomeTeam"])
-    | set(matches.loc[matches["Season"] == latest_season, "AwayTeam"])
-)
-older = [t for t in model.teams if t not in current]
-team_options = current + older
+# Likely current top-flight roster first in the pickers, everyone else after.
+roster = top_flight_teams(matches, top_code)
+others = [t for t in model.teams if t not in roster]
+team_options = roster + others
 
 # ── Fixture selection ────────────────────────────────────────────────────────
 st.subheader(league_name)
@@ -255,3 +262,77 @@ else:
         "For education and entertainment — a Poisson model knows nothing about "
         "injuries, lineups, or motivation. Not betting advice."
     )
+
+st.divider()
+
+with st.expander("ℹ️ How the model works"):
+    st.markdown(
+        f"""
+1. **Poisson regression** — every team's goals in every match are modeled as
+   `log E[goals] = intercept + home_advantage + attack(team) − defence(opponent)`.
+   Fitting this on {model.train_matches:,} matches (top **two** divisions, so
+   promoted teams carry ratings from their old division) yields an attack and
+   defence strength per team plus a league-wide home boost
+   (currently **{(model.home_advantage - 1) * 100:+.0f}%**).
+2. **Time decay** — a match played `half-life` days ago counts half as much as
+   one played today, so ratings track current form.
+3. **Shrinkage** — every team gets a couple of low-weight pseudo-matches
+   against a synthetic average side, keeping small-sample teams (promoted
+   clubs early in a season) close to league average until real results arrive.
+4. **Monte Carlo** — for your fixture the model produces expected goals for
+   each side; tens of thousands of Poisson scorelines are then drawn to
+   estimate every probability shown above.
+        """
+    )
+
+with st.expander("📏 Model quality — walk-forward backtest"):
+    st.markdown(
+        "The model is replayed over history: refit every 4 weeks using only "
+        "matches known at that point, then scored on the following weeks' "
+        "top-division results. **Lower is better** for every metric. The "
+        "bookmaker row is the accuracy ceiling to chase; uniform ⅓ is the floor."
+    )
+    if st.toggle("Run backtest for the current settings"):
+        metrics, calib, n_eval, n_refits = get_backtest(
+            codes, n_seasons, float(half_life), data_version
+        )
+        st.caption(f"{n_eval:,} matches evaluated across {n_refits} refits.")
+        st.dataframe(metrics.round(4), use_container_width=True)
+
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=[0, 1], y=[0, 1], mode="lines",
+                line=dict(color=GRID, width=2, dash="dash"),
+                hoverinfo="skip", showlegend=False,
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=calib["predicted"], y=calib["observed"], mode="lines+markers",
+                marker=dict(color=HOME_COLOR, size=9),
+                line=dict(color=HOME_COLOR, width=2),
+                customdata=calib["n"],
+                hovertemplate="Predicted %{x:.0%} → observed %{y:.0%} "
+                "(%{customdata} outcomes)<extra></extra>",
+                showlegend=False,
+            )
+        )
+        fig.update_layout(
+            title=dict(text="Calibration: predicted vs observed frequency",
+                       font=dict(size=14, color=INK)),
+            height=380,
+            margin=dict(l=0, r=10, t=40, b=0),
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+            xaxis=dict(title="Predicted probability", tickformat=".0%", range=[0, 1],
+                       gridcolor=GRID, tickfont=dict(color=INK_2), title_font=dict(color=INK_2)),
+            yaxis=dict(title="Observed frequency", tickformat=".0%", range=[0, 1],
+                       gridcolor=GRID, tickfont=dict(color=INK_2), title_font=dict(color=INK_2)),
+            font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif"),
+        )
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.caption(
+            "Points on the dashed line = perfectly calibrated. To tune "
+            "hyperparameters, run `python -m scripts.tune` and adopt whatever "
+            "minimizes RPS."
+        )
