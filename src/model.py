@@ -94,7 +94,7 @@ def _pseudo_observations(teams: list[str], avg_goals: float, strength: float) ->
 
 
 def fit_poisson_model(
-    matches: pd.DataFrame, half_life_days: float = 300.0, shrinkage_matches: float = 3.0
+    matches: pd.DataFrame, half_life_days: float = 120.0, shrinkage_matches: float = 1.5
 ) -> PoissonModel:
     """Fit the Poisson GLM on a league's match history."""
     long_df = _long_format(matches)
