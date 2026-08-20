@@ -15,18 +15,105 @@ from src.evaluate import backtest
 from src.model import fit_poisson_model
 from src.simulate import simulate_match
 
-# Validated chart palette (dataviz reference instance, light mode)
-INK = "#0b0b0b"
-INK_2 = "#52514e"
+# Validated chart palette (dataviz reference instance, dark mode)
+INK = "#ffffff"
+INK_2 = "#c3c2b7"
 MUTED = "#898781"
-GRID = "#e1e0d9"
-SURFACE = "#fcfcfb"
-HOME_COLOR = "#2a78d6"  # categorical slot 1 (blue)
-AWAY_COLOR = "#eb6834"  # categorical slot 2 (orange)
+GRID = "#2c2c2a"
+SURFACE = "#17181b"
+HOME_COLOR = "#3987e5"  # categorical slot 1 (blue, dark-surface step)
+AWAY_COLOR = "#d95926"  # categorical slot 2 (orange, dark-surface step)
 DRAW_COLOR = "#898781"  # neutral
-SEQ_BLUES = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"]
+# Sequential blue for the dark surface: near-zero recedes into the card.
+SEQ_BLUES = ["#14192a", "#0d366b", "#184f95", "#256abf", "#3987e5", "#6da7ec", "#9ec5f4"]
+
+FONT_STACK = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif"
+DISPLAY_STACK = "'Space Grotesk', 'Inter', system-ui, sans-serif"
 
 st.set_page_config(page_title="Big 5 Match Predictor", page_icon="⚽", layout="wide")
+
+st.markdown(
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700'
+    '&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+<style>
+.stApp * {
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif !important;
+}
+.stApp code, .stApp pre, .stApp kbd, .stApp code span {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+}
+.stApp [data-testid="stIconMaterial"],
+.stApp .material-symbols-rounded, .stApp .material-symbols-outlined,
+.stApp [class*="material-symbols"] {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5,
+.stApp h1 span, .stApp h2 span, .stApp h3 span, .stApp h4 span,
+.stApp [data-testid="stMetricValue"], .stApp [data-testid="stMetricValue"] div,
+.stApp .stButton button, .stApp .stButton button p,
+.stApp [data-testid="stExpander"] summary p {
+    font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif !important;
+    letter-spacing: -0.01em;
+}
+
+/* Strip Streamlit chrome */
+#MainMenu, footer, .stDeployButton, [data-testid="stToolbar"] { display: none !important; }
+header[data-testid="stHeader"] { background: transparent; }
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background: #101114;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Metric tiles as cards */
+[data-testid="stMetric"] {
+    background: #17181b;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    padding: 18px 20px 14px;
+}
+[data-testid="stMetricValue"] { font-size: 2.1rem; font-weight: 600; }
+[data-testid="stMetricLabel"] { color: #c3c2b7; }
+[data-testid="stMetricDelta"] { color: #898781 !important; }
+[data-testid="stMetricDelta"] svg { display: none; }
+
+/* Expanders as cards */
+[data-testid="stExpander"] {
+    background: #141518;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+    overflow: hidden;
+}
+[data-testid="stExpander"] summary { font-family: 'Space Grotesk', sans-serif; }
+
+/* Buttons */
+.stButton button {
+    border-radius: 10px;
+    font-weight: 600;
+    border: none;
+}
+.stButton button[kind="primary"] {
+    box-shadow: 0 0 24px rgba(57, 135, 229, 0.35);
+}
+
+/* Inputs */
+[data-baseweb="select"] > div { border-radius: 10px; }
+
+/* Info/alert boxes */
+[data-testid="stAlert"] { border-radius: 12px; }
+
+hr { border-color: rgba(255, 255, 255, 0.08); }
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_data(ttl=6 * 3600, show_spinner="Downloading match data…")
@@ -76,7 +163,7 @@ def outcome_bar(p_home: float, p_draw: float, p_away: float, home: str, away: st
         xaxis=dict(range=[0, max(values) * 1.25], showgrid=False, visible=False),
         yaxis=dict(autorange="reversed", tickfont=dict(color=INK, size=13)),
         showlegend=False,
-        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif"),
+        font=dict(family=FONT_STACK),
     )
     return fig
 
@@ -123,7 +210,7 @@ def score_heatmap(score_matrix: pd.DataFrame, home: str, away: str) -> go.Figure
             tickfont=dict(color=INK_2),
             title_font=dict(color=INK_2),
         ),
-        font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif"),
+        font=dict(family=FONT_STACK),
     )
     return fig
 
@@ -320,7 +407,7 @@ with st.expander("📏 Model quality — walk-forward backtest"):
         )
         fig.update_layout(
             title=dict(text="Calibration: predicted vs observed frequency",
-                       font=dict(size=14, color=INK)),
+                       font=dict(size=14, color=INK, family=DISPLAY_STACK)),
             height=380,
             margin=dict(l=0, r=10, t=40, b=0),
             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -328,7 +415,7 @@ with st.expander("📏 Model quality — walk-forward backtest"):
                        gridcolor=GRID, tickfont=dict(color=INK_2), title_font=dict(color=INK_2)),
             yaxis=dict(title="Observed frequency", tickformat=".0%", range=[0, 1],
                        gridcolor=GRID, tickfont=dict(color=INK_2), title_font=dict(color=INK_2)),
-            font=dict(family="system-ui, -apple-system, 'Segoe UI', sans-serif"),
+            font=dict(family=FONT_STACK),
         )
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         st.caption(
